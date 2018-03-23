@@ -3,6 +3,7 @@ package com.example.yingyanlirary.utils;
 import android.annotation.SuppressLint;
 import android.app.ActivityManager;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.telephony.TelephonyManager;
 
 import com.baidu.mapapi.model.LatLng;
@@ -52,7 +53,6 @@ public class CommonUtil {
      * 校验double数值是否为0
      *
      * @param value
-     *
      * @return
      */
     public static boolean isEqualToZero(double value) {
@@ -88,7 +88,6 @@ public class CommonUtil {
      * 获取时分秒
      *
      * @param timestamp 时间戳（单位：毫秒）
-     *
      * @return
      */
     public static String getHMS(long timestamp) {
@@ -105,7 +104,6 @@ public class CommonUtil {
      * 获取年月日 时分秒
      *
      * @param timestamp 时间戳（单位：毫秒）
-     *
      * @return
      */
     public static String formatTime(long timestamp) {
@@ -123,7 +121,7 @@ public class CommonUtil {
         Integer hours = second / (60 * 60);
         Integer minutes = second / 60 - hours * 60;
         Integer seconds = second - minutes * 60 - hours * 60 * 60;
-        Object[] array = new Object[] {hours, minutes, seconds};
+        Object[] array = new Object[]{hours, minutes, seconds};
         return String.format(format, array);
     }
 
@@ -197,7 +195,6 @@ public class CommonUtil {
      * 获取设备IMEI码
      *
      * @param context
-     *
      * @return
      */
     @SuppressLint("MissingPermission")
@@ -234,4 +231,52 @@ public class CommonUtil {
 //        com.baidu.trace.LBSTraceService
     }
 
+
+    /**
+     * 判断是否是第一次开启
+     */
+    public static boolean isFristStart(Context context) {
+
+        SharedPreferences preferences = context.getSharedPreferences("first_setting", Context.MODE_PRIVATE);
+
+        boolean isFirst = preferences.getBoolean("first_start", true);
+        if (isFirst) {
+
+            SharedPreferences.Editor editor = preferences.edit();
+            editor.putBoolean("first_start", false);
+            editor.commit();
+        }
+
+        return isFirst;
+    }
+
+    /**
+     * 把日期转为字符串，精确到分钟
+     */
+    public static String ConverToString_PreciseMinuteSecond(long date) {
+        SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.SIMPLIFIED_CHINESE);
+        return df.format(new Date(date));
+    }
+
+    public static  boolean isEmpty(String str){
+
+        if(str == null) return true;
+        if(str.trim().length() == 0){
+            return true;
+        }
+
+        return false;
+    }
+
+    public  static  boolean isNotEmpty(String str){
+
+
+        if(str == null) return false;
+        if(str.trim().length() == 0){
+            return false;
+        }
+
+        return true;
+
+    }
 }

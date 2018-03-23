@@ -52,9 +52,43 @@ public final class Constants {
     public static final String LAST_LOCATION = "last_location";
 
     /**
-     * 保活的广播
+     * 存储信息的文件名称
      * */
+    public static final String PREFERENCE_FILE_NAME = "entitySetting";
 
-    public static final String ALIVE_BROADCAST = "com.driverapp.service.destroy";
+    /**
+     *检查是否停止了服务
+     * */
+    public static  final String IS_SERVICE_STOPED = "is_service_stop";
+
+    /**
+     *检查是否停止采集
+     * */
+    public static  final String IS_GATHER_STOPED = "is_gather_stop";
+
+   /**
+    * 程序的notification显示的标题
+    * */
+   public static  final String NOTIFICATION_TITLE = "notification_title";
+
+   /**
+    * 程序的notification显示的内容
+    * */
+   public static  final String NOTIFICATION_CONTENT = "notification_content";
+
+   /**
+    * 百度的notifcation显示的标题
+    * */
+   public static final String BAI_DU_NOTIFICATION_TITLE = "bai_du_notification_title";
+
+    /**
+     * 百度的notifcation显示的内容
+     * */
+    public static final String BAI_DU_NOTIFICATION_CONTENT = "bai_du_notification_title";
+
+    /**
+     * 百度服务的鹰眼id
+     * */
+    public static final String SERVICE_ID = "service_id";
 
 }

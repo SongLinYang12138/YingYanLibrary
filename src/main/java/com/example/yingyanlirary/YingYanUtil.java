@@ -1,25 +1,45 @@
 package com.example.yingyanlirary;
 
 import android.app.Activity;
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
+import android.content.SharedPreferences;
+import android.database.Cursor;
 import android.os.Build;
+import android.os.IBinder;
+import android.provider.Settings;
+import android.support.annotation.RequiresApi;
 import android.util.Log;
+import android.widget.Toast;
 
 import com.baidu.mapapi.model.LatLng;
+import com.baidu.trace.LBSTraceClient;
 import com.baidu.trace.api.entity.OnEntityListener;
 import com.baidu.trace.api.fence.FenceAlarmPushInfo;
 import com.baidu.trace.api.fence.MonitoredAction;
+import com.baidu.trace.api.track.AddPointRequest;
 import com.baidu.trace.api.track.LatestPoint;
 import com.baidu.trace.api.track.LatestPointResponse;
 import com.baidu.trace.api.track.OnTrackListener;
+import com.baidu.trace.model.CoordType;
 import com.baidu.trace.model.OnTraceListener;
+import com.baidu.trace.model.Point;
 import com.baidu.trace.model.PushMessage;
 import com.baidu.trace.model.StatusCodes;
 import com.baidu.trace.model.TraceLocation;
+import com.example.yingyanlirary.bean.GpsBean;
 import com.example.yingyanlirary.model.CurrentLocation;
+import com.example.yingyanlirary.service.AliveServiceA;
+import com.example.yingyanlirary.service.AliveServiceB;
 import com.example.yingyanlirary.utils.CommonUtil;
+import com.example.yingyanlirary.utils.Constants;
 import com.example.yingyanlirary.utils.MapUtil;
+import com.example.yingyanlirary.utils.PermissiontUtils;
 import com.example.yingyanlirary.utils.ViewUtil;
+
+import java.util.ArrayList;
 
 /**
  * Created by ysl on 2018/3/8.
@@ -51,31 +71,94 @@ public class YingYanUtil {
     private static final String TAG = "YINGYANUTIL";
     private Context context;
 
+    private SharedPreferences myPreference;
+
+    private ServiceConnection serviceConnection;
+
 
     public YingYanUtil(Context context) {
+
+        serviceConnection = new ServiceConnection() {
+            @Override
+            public void onServiceConnected(ComponentName componentName, IBinder iBinder) {
+
+                Log.e(Constants.TAG, "onServiceConnected   " + componentName.getClassName());
+            }
+
+            @Override
+            public void onServiceDisconnected(ComponentName componentName) {
+                Log.e(Constants.TAG, "onServiceConnected   " + componentName.getClassName());
+            }
+        };
         mapUtil = MapUtil.getInstance();
         viewUtil = new ViewUtil();
         this.context = context;
         initListener();
+        myPreference = context.getSharedPreferences(Constants.PREFERENCE_FILE_NAME, Context.MODE_PRIVATE);
     }
 
     /***
      * 开启服务
+     * @param serverId 服务id
+     * @param name EntityName
+     *@param interval 采集周期
+     * @param packInterval 打包上传周期
+     * @param isService 判断要不要开启AliveServiceA
+     * @param notiTitle AliveServiceA的notification的标题
+     * @param notiContent  AliveServiceA的notification的内容
+     *  @param baiduTitle 百度服务notification 的标题
+     * @param baiduContent 百度服务 notification 的内容
      * */
 
-    public void startService(String name,int interval,int packInterval) {
+    public void startService(int serverId, String name, int interval, int packInterval, boolean isService, String notiTitle, String notiContent, String baiduTitle, String baiduContent) {
 
-        YingYanClient.setEntityName(name,interval,packInterval);
+        Log.e(Constants.TAG, "rn调用了开启服务的方法");
+        YingYanClient.setEntityName(serverId, name, interval, packInterval, baiduTitle, baiduContent);
         if (YingYanClient.mTrace == null) {
-            viewUtil.showToast(context, "请设置EntityName");
+            Toast.makeText(context, "请设置EntityName", Toast.LENGTH_SHORT).show();
+            Log.i(Constants.TAG, "请设置EntityName");
             return;
         }
+
+        YingYanClient.mClient.startTrace(YingYanClient.mTrace, traceListener);
+
+        SharedPreferences.Editor editor = myPreference.edit();
+        editor.putBoolean(Constants.IS_SERVICE_STOPED, false);
+        editor.putString(Constants.BAI_DU_NOTIFICATION_TITLE, baiduTitle);
+        editor.putString(Constants.BAI_DU_NOTIFICATION_CONTENT, baiduContent);
+        editor.putString(Constants.NOTIFICATION_TITLE, notiTitle);
+        editor.putString(Constants.NOTIFICATION_CONTENT, notiContent);
+        editor.putInt(Constants.SERVICE_ID, serverId);
+        editor.commit();
         try {
-            YingYanClient.mClient.startTrace(YingYanClient.mTrace, traceListener);
+
+            boolean flaga = CommonUtil.isServiceRunning(context, AliveServiceA.class.getName());
+            if (!isService || !flaga) {
+
+                //开启保活服务
+                Intent intent = new Intent(context, AliveServiceA.class);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent);
+                } else {
+                    context.startService(intent);
+                }
+//                bindServiceB();
+
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
 
+    private void bindServiceB() {
+
+
+        Intent intent = new Intent(context, AliveServiceB.class);
+        context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE);
+    }
+
+    private void unBindServiceB() throws Exception {
+        context.unbindService(serviceConnection);
     }
 
     /**
@@ -83,23 +166,56 @@ public class YingYanUtil {
      */
     public void stopService() {
 
+        SharedPreferences.Editor editor = myPreference.edit();
+        editor.putBoolean(Constants.IS_SERVICE_STOPED, true);
+        editor.commit();
         try {
+            Intent intent = new Intent(context, AliveServiceA.class);
+            context.stopService(intent);
+//            unBindServiceB();
             YingYanClient.mClient.stopTrace(YingYanClient.mTrace, traceListener);
         } catch (Exception e) {
             e.printStackTrace();
         }
+        Cursor cursor = context.getContentResolver().query(GpsProvider.CONTENT_URI, GpsBean.GPSBEANS, null, null, null);
+
+        ArrayList<GpsBean> list = GpsBean.queryGpsBean(cursor);
+        cursor.close();
+        if (list != null) {
+            Log.e(Constants.TAG, "size  " + list.size());
+        } else {
+            Log.e(Constants.TAG, "size = 0  ");
+
+        }
+        try {
+            cursor.close();
+        } catch (Exception e) {
+        }
+        if (list != null && list.size() > 0) {
+
+            for (GpsBean bean : list) {
+                Log.i("aaaLog", bean.getCodeType() + "   " + bean.getFloor());
+            }
+
+        }
 
     }
+
 
     /**
      * 开启采集
      */
 
     public void startGather() {
-        if (!YingYanClient.isTraceStarted) {
-            viewUtil.showToast(context, "请开启服务");
-            return;
-        }
+//        if (!YingYanClient.isTraceStarted) {
+//            //            viewUtil.showToast(context, "请开启服务");
+//            return;
+//        }
+        Log.e(Constants.TAG, "rn调用了开启采集的方法");
+
+        SharedPreferences.Editor editor = myPreference.edit();
+        editor.putBoolean(Constants.IS_GATHER_STOPED, false);
+        editor.commit();
         try {
             YingYanClient.mClient.startGather(traceListener);
         } catch (Exception e) {
@@ -115,6 +231,9 @@ public class YingYanUtil {
     public void stopGather() {
 
         try {
+            SharedPreferences.Editor editor = myPreference.edit();
+            editor.putBoolean(Constants.IS_GATHER_STOPED, true);
+            editor.commit();
             YingYanClient.mClient.stopGather(traceListener);
         } catch (Exception e) {
             e.printStackTrace();
@@ -147,6 +266,7 @@ public class YingYanUtil {
                 CurrentLocation.latitude = currentLatLng.latitude;
                 CurrentLocation.longitude = currentLatLng.longitude;
 
+                Log.i(Constants.TAG, CurrentLocation.locTime + " la: " + CurrentLocation.latitude + "  lo: " + CurrentLocation.longitude);
 
             }
         };
@@ -186,8 +306,14 @@ public class YingYanUtil {
             @Override
             public void onBindServiceCallback(int errorNo, String message) {
 
-                viewUtil.showToast(context, String.format("onBindServiceCallback, errorNo:%d, message:%s ", errorNo, message));
-                Log.e(TAG, String.format("onBindServiceCallback, errorNo:%d, message:%s ", errorNo, message));
+//                           viewUtil.showToast(context, String.format("onBindServiceCallback, errorNo:%d, message:%s ", errorNo, message));
+                Log.e(Constants.TAG, "onbind " + String.format("onBindServiceCallback, errorNo:%d, message:%s ", errorNo, message));
+
+                GpsBean bean = new GpsBean();
+                bean.setCodeType("onbind " + String.format("onBindServiceCallback, errorNo:%d, message:%s ", errorNo, message));
+                bean.setFloor(CommonUtil.ConverToString_PreciseMinuteSecond(System.currentTimeMillis()));
+                context.getContentResolver().insert(GpsProvider.CONTENT_URI, bean.toContentValue());
+
             }
 
             /**
@@ -215,11 +341,17 @@ public class YingYanUtil {
 ////                    setTraceBtnStyle();
 //                    registerReceiver();
                 } else {
-
+                    YingYanClient.isTraceStarted = false;
 
                 }
-                viewUtil.showToast(context, String.format("onStartTraceCallback, errorNo:%d, message:%s ", errorNo, message));
-                Log.e(TAG, String.format("onStartTraceCallback, errorNo:%d, message:%s ", errorNo, message));
+//                           viewUtil.showToast(context, String.format("onStartTraceCallback, errorNo:%d, message:%s ", errorNo, message));
+                Log.e(Constants.TAG, "startTrace" + String.format("onStartTraceCallback, errorNo:%d, message:%s ", errorNo, message));
+
+                GpsBean bean = new GpsBean();
+                bean.setCodeType("startTrace" + String.format("onStartTraceCallback, errorNo:%d, message:%s ", errorNo, message));
+                bean.setFloor(CommonUtil.ConverToString_PreciseMinuteSecond(System.currentTimeMillis()));
+                context.getContentResolver().insert(GpsProvider.CONTENT_URI, bean.toContentValue());
+
             }
 
             /**
@@ -248,8 +380,14 @@ public class YingYanUtil {
 //                    setGatherBtnStyle();
 //                    unregisterPowerReceiver();
                 }
-                viewUtil.showToast(context,
-                        String.format("onStopTraceCallback, errorNo:%d, message:%s ", errorNo, message));
+//                           viewUtil.showToast(context,
+//                       String.format("onStopTraceCallback, errorNo:%d, message:%s ", errorNo, message));
+                Log.i(Constants.TAG, "onStopTrace" + String.format("onStopTraceCallback, errorNo:%d, message:%s ", errorNo, message));
+
+                GpsBean bean = new GpsBean();
+                bean.setCodeType("onStopTrace" + String.format("onStopTraceCallback, errorNo:%d, message:%s ", errorNo, message));
+                bean.setFloor(CommonUtil.ConverToString_PreciseMinuteSecond(System.currentTimeMillis()));
+                context.getContentResolver().insert(GpsProvider.CONTENT_URI, bean.toContentValue());
             }
 
             /**
@@ -261,6 +399,7 @@ public class YingYanUtil {
              *                <pre>12000：请求发送失败</pre>
              *                <pre>12001：采集开启失败</pre>
              *                <pre>12002：服务未开启</pre>
+             *                <pre>12003: 采集已开启</pre>
              */
             @Override
             public void onStartGatherCallback(int errorNo, String message) {
@@ -272,8 +411,14 @@ public class YingYanUtil {
 //                    editor.apply();
 //                    setGatherBtnStyle();
                 }
-                viewUtil.showToast(context,
-                        String.format("onStartGatherCallback, errorNo:%d, message:%s ", errorNo, message));
+//                           viewUtil.showToast(context,
+//                       String.format("onStartGatherCallback, errorNo:%d, message:%s ", errorNo, message));
+                Log.e(Constants.TAG, "startGather" + String.format("onStartGatherCallback, errorNo:%d, message:%s ", errorNo, message));
+
+                GpsBean bean = new GpsBean();
+                bean.setCodeType("startGather" + String.format("onStartGatherCallback, errorNo:%d, message:%s ", errorNo, message));
+                bean.setFloor(CommonUtil.ConverToString_PreciseMinuteSecond(System.currentTimeMillis()));
+                context.getContentResolver().insert(GpsProvider.CONTENT_URI, bean.toContentValue());
             }
 
             /**
@@ -297,8 +442,15 @@ public class YingYanUtil {
 //                    setGatherBtnStyle();
 
                 }
-                viewUtil.showToast(context,
-                        String.format("onStopGatherCallback, errorNo:%d, message:%s ", errorNo, message));
+//                           viewUtil.showToast(context,
+//                       String.format("onStopGatherCallback, errorNo:%d, message:%s ", errorNo, message));
+                Log.e(Constants.TAG, "stopGrather" + String.format("onStopGatherCallback, errorNo:%d, message:%s ", errorNo, message));
+
+                GpsBean bean = new GpsBean();
+                bean.setCodeType("stopGrather" + String.format("onStopGatherCallback, errorNo:%d, message:%s ", errorNo, message));
+                bean.setFloor(CommonUtil.ConverToString_PreciseMinuteSecond(System.currentTimeMillis()));
+                context.getContentResolver().insert(GpsProvider.CONTENT_URI, bean.toContentValue());
+
             }
 
             /**
@@ -317,14 +469,14 @@ public class YingYanUtil {
             @Override
             public void onPushCallback(byte messageType, PushMessage pushMessage) {
                 if (messageType < 0x03 || messageType > 0x04) {
-                    viewUtil.showToast(context, pushMessage.getMessage());
+                    //            viewUtil.showToast(context, pushMessage.getMessage());
                     return;
                 }
                 FenceAlarmPushInfo alarmPushInfo = pushMessage.getFenceAlarmPushInfo();
                 if (null == alarmPushInfo) {
-                    viewUtil.showToast(context,
-                            String.format("onPushCallback, messageType:%d, messageContent:%s ", messageType,
-                                    pushMessage));
+                    //            viewUtil.showToast(context,
+//                            String.format("onPushCallback, messageType:%d, messageContent:%s ", messageType,
+//                                    pushMessage));
                     return;
                 }
                 StringBuffer alarmInfo = new StringBuffer();
@@ -336,8 +488,8 @@ public class YingYanUtil {
 
                 if (Build.VERSION.SDK_INT > Build.VERSION_CODES.JELLY_BEAN) {
 
-                    Log.e("baidu", alarmInfo.toString());
-                    viewUtil.showToast(context, alarmInfo.toString());
+                    Log.e(Constants.TAG, alarmInfo.toString());
+                    //            viewUtil.showToast(context, alarmInfo.toString());
 //                    Notification notification = new Notification.Builder(trackApp)
 //                            .setContentTitle(getResources().getString(R.string.alarm_push_title))
 //                            .setContentText(alarmInfo.toString())
@@ -345,16 +497,33 @@ public class YingYanUtil {
 //                            .setWhen(System.currentTimeMillis()).build();
 //                    notificationManager.notify(notifyId++, notification);
                 }
+
             }
 
             @Override
             public void onInitBOSCallback(int errorNo, String message) {
-                viewUtil.showToast(context,
-                        String.format("onInitBOSCallback, errorNo:%d, message:%s ", errorNo, message));
+//                           viewUtil.showToast(context,
+//                       String.format("onInitBOSCallback, errorNo:%d, message:%s ", errorNo, message));
             }
         };
-
     }
 
+    /**
+     * 检查动态权限，并申请
+     * */
+//    private void checkPermission(Activity context){
+//        PermissiontUtils permissiontUtils = new PermissiontUtils(context);
+//        permissiontUtils.checkPermission();
+//        permissiontUtils.ignoreBatteryOptimization();
+//
+//        Log.i("aaa", "gps " + permissiontUtils.isOPen());
+//        if (!permissiontUtils.isOPen()) {
+//            // 转到手机设置界面，用户设置GPS
+//            Intent intent = new Intent(
+//                    Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+//            context.startActivityForResult(intent, 0); // 设置完成后返回到原来的界面
+//        }
+//    }
+//
 
 }
